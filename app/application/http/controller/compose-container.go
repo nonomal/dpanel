@@ -16,6 +16,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 func (self Compose) ContainerDeploy(http *gin.Context) {
@@ -23,6 +24,7 @@ func (self Compose) ContainerDeploy(http *gin.Context) {
 		Id                int32              `json:"id" binding:"required"`
 		Environment       []accessor.EnvItem `json:"environment"`
 		DeployServiceName []string           `json:"deployServiceName"`
+		CreatePath        bool               `json:"createPath"`
 	}
 	params := ParamsValidate{}
 	if !self.Validate(http, &params) {
@@ -48,6 +50,19 @@ func (self Compose) ContainerDeploy(http *gin.Context) {
 		self.JsonResponseWithError(http, err, 500)
 		return
 	}
+	// 尝试创建 compose 挂载的目录，如果运行在容器内创建也无效
+	if params.CreatePath {
+		for _, service := range tasker.Project().Services {
+			for _, volume := range service.Volumes {
+				if filepath.IsAbs(volume.Source) {
+					if _, err = os.Stat(volume.Source); err != nil {
+						_ = os.MkdirAll(volume.Source, os.ModePerm)
+					}
+				}
+			}
+		}
+	}
+
 	response, err := tasker.Deploy(params.DeployServiceName...)
 	if err != nil {
 		self.JsonResponseWithError(http, err, 500)
@@ -56,12 +71,18 @@ func (self Compose) ContainerDeploy(http *gin.Context) {
 
 	wsBuffer := ws.NewProgressPip(fmt.Sprintf(ws.MessageTypeCompose, composeRow.ID))
 	defer wsBuffer.Close()
-
+	wsBuffer.OnWrite = func(p string) error {
+		wsBuffer.BroadcastMessage(p)
+		if strings.Contains(p, "denied: You may not login") {
+			_ = notice.Message{}.Error("imagePull", "拉取镜失败，仓库没有权限。")
+			return errors.New("image pull denied")
+		}
+		return nil
+	}
 	_, err = io.Copy(wsBuffer, response)
 	if err != nil {
 		slog.Error("compose", "deploy copy error", err)
 	}
-
 	// 部署完成后也上更新状态
 	composeRun, err := logic.Compose{}.LsItem(tasker.Name)
 	if err != nil {
@@ -119,12 +140,6 @@ func (self Compose) ContainerDestroy(http *gin.Context) {
 		composeRow.Setting.Status = composeRun.Status
 	}
 	_, _ = dao.Compose.Updates(composeRow)
-
-	path := filepath.Join(filepath.Dir(tasker.Composer.Project.ComposeFiles[0]), logic.ComposeProjectDeployFileName)
-	err = os.Remove(path)
-	if err != nil {
-		slog.Debug("compose", "delete deploy file", err, "path", path)
-	}
 
 	if params.DeleteData {
 		_, err = dao.Compose.Where(dao.Compose.ID.Eq(composeRow.ID)).Delete()
@@ -236,9 +251,8 @@ func (self Compose) ContainerLog(http *gin.Context) {
 		select {
 		case <-wsBuffer.Done():
 			err = response.Close()
-			slog.Debug("compose", "run log  response close", fmt.Sprintf(ws.MessageTypeComposeLog, composeRow.ID), "error", err)
 			if err != nil {
-				fmt.Printf("%v \n", err)
+				slog.Debug("compose", "run log  response close", fmt.Sprintf(ws.MessageTypeComposeLog, composeRow.ID), "error", err)
 			}
 		}
 	}()

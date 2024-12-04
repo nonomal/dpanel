@@ -11,7 +11,7 @@
 [![GitHub latest commit](https://img.shields.io/github/last-commit/donknap/dpanel.svg)](https://github.com/donknap/dpanel/commits/master/) &nbsp;
 [![Build Status](https://github.com/donknap/dpanel/actions/workflows/release.yml/badge.svg)](https://github.com/donknap/dpanel/actions) &nbsp;
 [![Docker Pulls](https://img.shields.io/docker/pulls/dpanel/dpanel)](https://hub.docker.com/r/dpanel/dpanel/tags) &nbsp;
-
+<a href="https://hellogithub.com/repository/c69089b776704985b989f98626de977a" target="_blank"><img src="https://abroad.hellogithub.com/v1/widgets/recommend.svg?rid=c69089b776704985b989f98626de977a&claim_uid=ekhLfDOxR5U0mVw&theme=small" alt="Featured｜HelloGitHub" /></a>
 
 [**官网**](https://dpanel.cc/) &nbsp; |
 &nbsp; [**文档**](https://dpanel.cc/#/zh-cn/install/docker) &nbsp; |
@@ -49,13 +49,21 @@ docker run -it -d --name dpanel --restart=always \
  dpanel/dpanel:lite
 ```
 
-#### 赞助
+#### 为爱发电
 
 DPanel 是一个开源软件。
 
 如果此项目对你所有帮助，并希望我继续下去，请考虑赞助我为爱发电！感谢所有的爱和支持。
 
 https://afdian.com/a/dpanel
+
+#### 赞助感谢
+
+###### 服务器 & CDN
+
+<a href="https://anycast.ai" target="_blank">
+<img src="https://doc.dpanel.cc/storage/image/sponsor-server.png" width="200" />
+</a>
 
 #### 交流群
 

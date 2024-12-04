@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/donknap/dpanel/common/accessor"
 	"github.com/donknap/dpanel/common/function"
+	"github.com/donknap/dpanel/common/service/compose"
 	"github.com/donknap/dpanel/common/service/exec"
 	"github.com/donknap/dpanel/common/service/storage"
 	"gopkg.in/yaml.v3"
@@ -13,6 +14,7 @@ import (
 	"io/fs"
 	"net/http"
 	"os"
+	exec2 "os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -30,6 +32,9 @@ type Store struct {
 }
 
 func (self Store) SyncByGit(path, gitUrl string) error {
+	if _, err := exec2.LookPath("git"); err != nil {
+		return errors.New("同步商店仓库需要使用 git 命令，请先安装")
+	}
 	out, err := exec.Command{}.Run(&exec.RunCommandOption{
 		CmdName: "git",
 		CmdArgs: []string{
@@ -48,7 +53,7 @@ func (self Store) SyncByGit(path, gitUrl string) error {
 	return nil
 }
 
-func (self Store) SyncByZip(path, zipUrl string) error {
+func (self Store) SyncByZip(path, zipUrl string, root string) error {
 	zipTempFile, _ := os.CreateTemp("", "dpanel-store")
 	defer func() {
 		_ = zipTempFile.Close()
@@ -84,6 +89,15 @@ func (self Store) SyncByZip(path, zipUrl string) error {
 			continue
 		}
 		targetFilePath := filepath.Join(path, file.Name)
+		if root != "" {
+			if before, after, exists := strings.Cut(file.Name, root); exists {
+				if before != "" {
+					targetFilePath = filepath.Join(path, root, after)
+				}
+			} else {
+				continue
+			}
+		}
 		err = os.MkdirAll(filepath.Dir(targetFilePath), os.ModePerm)
 		if err != nil {
 			return err
@@ -198,6 +212,11 @@ func (self Store) GetAppByOnePanel(storePath string) ([]accessor.StoreAppItem, e
 			if len(segments) == 3 {
 				fields := yamlData.GetSliceStringMapString("additionalProperties.formFields")
 				env := make([]accessor.EnvItem, 0)
+				env = append(env, accessor.EnvItem{
+					Name:  "CONTAINER_NAME",
+					Label: "容器名称",
+					Value: compose.ContainerDefaultName,
+				})
 				for _, field := range fields {
 					env = append(env, accessor.EnvItem{
 						Name:  field["envKey"],
@@ -286,19 +305,26 @@ func (self Store) GetAppByCasaos(storePath string) ([]accessor.StoreAppItem, err
 			if err != nil {
 				return err
 			}
-
-			storeItem.Description = yamlData.GetString("x-casaos.description.zh_cn")
+			storeItem.Description = yamlData.GetString("x-casaos.description.zh_cn") + "\n" + yamlData.GetString("x-casaos.description.en_us")
 			storeItem.Tag = []string{
 				yamlData.GetString("x-casaos.category"),
 			}
 			storeItem.Logo = yamlData.GetString("x-casaos.icon")
-			storeItem.Content = "markdown://" + yamlData.GetString("x-casaos.tips.before_install.zh_cn")
+			readme := yamlData.GetString("x-casaos.tips.before_install.zh_cn")
+			if readme != "" {
+				storeItem.Content = "markdown://" + yamlData.GetString("x-casaos.tips.before_install.zh_cn")
+			}
 			versionPath, _ := filepath.Rel(filepath.Dir(filepath.Dir(storePath)), path)
 			storeItem.Version["latest"] = accessor.StoreAppVersionItem{
 				Name:        "latest",
 				ComposeFile: versionPath,
 				Environment: make([]accessor.EnvItem, 0),
 			}
+		}
+
+		if strings.HasSuffix(relPath, "README.md") {
+			readmePath, _ := filepath.Rel(filepath.Dir(filepath.Dir(storePath)), path)
+			storeItem.Content = fmt.Sprintf("markdown-file://%s", readmePath)
 		}
 		return nil
 	})
