@@ -10,8 +10,9 @@ import (
 	"github.com/donknap/dpanel/common/service/docker"
 	"github.com/donknap/dpanel/common/service/exec"
 	"io"
+	"log/slog"
 	"os"
-	"strconv"
+	exec2 "os/exec"
 	"strings"
 )
 
@@ -25,7 +26,8 @@ type Task struct {
 
 func (self Task) Deploy(serviceName ...string) (io.Reader, error) {
 	cmd := []string{
-		"--progress", "tty", "up", "-d",
+		//"--progress", "tty",
+		"up", "-d",
 	}
 
 	if !function.IsEmptyArray(serviceName) {
@@ -51,7 +53,8 @@ func (self Task) Deploy(serviceName ...string) (io.Reader, error) {
 
 func (self Task) Destroy(deleteImage bool, deleteVolume bool) (io.Reader, error) {
 	cmd := []string{
-		"--progress", "tty", "down",
+		//"--progress", "tty",
+		"down",
 	}
 	// 删除compose 前需要先把关联的已有容器网络退出
 	for _, item := range self.Composer.Project.Networks {
@@ -77,14 +80,16 @@ func (self Task) Destroy(deleteImage bool, deleteVolume bool) (io.Reader, error)
 
 func (self Task) Ctrl(op string) (io.Reader, error) {
 	cmd := []string{
-		"--progress", "tty", op,
+		//"--progress", "tty",
+		op,
 	}
 	return self.runCommand(cmd)
 }
 
 func (self Task) Logs() (io.ReadCloser, error) {
 	cmd := []string{
-		"--progress", "tty", "logs", "-f",
+		//"--progress", "tty",
+		"logs", "-f",
 	}
 	return self.runCommand(cmd)
 }
@@ -95,6 +100,7 @@ func (self Task) Project() *types.Project {
 
 type composeContainerResult struct {
 	Name       string                             `json:"name"`
+	Service    string                             `json:"service"`
 	Publishers []composeContainerPublishersResult `json:"publishers"`
 	State      string                             `json:"state"`
 	Status     string                             `json:"status"`
@@ -116,52 +122,46 @@ func (self Task) Ps() []*composeContainerResult {
 	cmd := self.Composer.GetBaseCommand()
 	cmd = append(cmd, "ps", "--format", "json", "--all")
 
-	out := exec.Command{}.RunWithResult(&exec.RunCommandOption{
-		CmdName: "docker",
-		CmdArgs: append(append(docker.Sdk.ExtraParams, "compose"), cmd...),
-	})
+	out := ""
+	if _, err := exec2.LookPath("docker-compose"); err == nil {
+		out = exec.Command{}.RunWithResult(&exec.RunCommandOption{
+			CmdName: "docker-compose",
+			CmdArgs: cmd,
+			Env:     docker.Sdk.Env,
+		})
+	} else {
+		out = exec.Command{}.RunWithResult(&exec.RunCommandOption{
+			CmdName: "docker",
+			CmdArgs: append(append(docker.Sdk.ExtraParams, "compose"), cmd...),
+		})
+	}
 	if out == "" {
 		return result
 	}
-	newReader := bufio.NewReader(bytes.NewReader([]byte(out)))
-	for {
-		line, _, err := newReader.ReadLine()
-		if err == io.EOF {
-			break
+	if strings.HasPrefix(out, "[{") {
+		// 兼容 docker-compose ps 返回数据
+		temp := make([]*composeContainerResult, 0)
+		err := json.Unmarshal([]byte(out), &temp)
+		if err != nil {
+			slog.Debug("compose task docker-compose failed", err.Error())
+			return nil
 		}
-		temp := composeContainerResult{}
-		err = json.Unmarshal(line, &temp)
-		if err == nil {
-			result = append(result, &temp)
+		return temp
+	} else {
+		newReader := bufio.NewReader(bytes.NewReader([]byte(out)))
+		for {
+			line, _, err := newReader.ReadLine()
+			if err == io.EOF {
+				break
+			}
+			temp := composeContainerResult{}
+			err = json.Unmarshal(line, &temp)
+			if err == nil {
+				result = append(result, &temp)
+			}
 		}
-	}
-	return result
-}
-
-func (self Task) PsFromYaml() []*composeContainerResult {
-	result := make([]*composeContainerResult, 0)
-	if self.Name == "" {
 		return result
 	}
-	for _, item := range self.Composer.Project.Services {
-		container := &composeContainerResult{
-			Name:       item.Name,
-			Publishers: make([]composeContainerPublishersResult, 0),
-			State:      "waiting",
-			Status:     "",
-		}
-		for _, port := range item.Ports {
-			publicPort, _ := strconv.Atoi(port.Published)
-			container.Publishers = append(container.Publishers, composeContainerPublishersResult{
-				PublishedPort: publicPort,
-				TargetPort:    int(port.Target),
-				Protocol:      port.Protocol,
-				URL:           port.HostIP,
-			})
-		}
-		result = append(result, container)
-	}
-	return result
 }
 
 func (self Task) GetYaml() ([2]string, error) {
@@ -179,11 +179,19 @@ func (self Task) GetYaml() ([2]string, error) {
 
 func (self Task) runCommand(command []string) (io.ReadCloser, error) {
 	command = append(self.Composer.GetBaseCommand(), command...)
-	return exec.Command{}.RunInTerminal(&exec.RunCommandOption{
-		CmdName: "docker",
-		CmdArgs: append(
-			append(docker.Sdk.ExtraParams, "compose"),
-			command...,
-		),
-	})
+	if _, err := exec2.LookPath("docker-compose"); err == nil {
+		return exec.Command{}.RunInTerminal(&exec.RunCommandOption{
+			CmdName: "docker-compose",
+			CmdArgs: command,
+			Env:     docker.Sdk.Env,
+		})
+	} else {
+		return exec.Command{}.RunInTerminal(&exec.RunCommandOption{
+			CmdName: "docker",
+			CmdArgs: append(
+				append(docker.Sdk.ExtraParams, "compose", "--progress", "tty"),
+				command...,
+			),
+		})
+	}
 }

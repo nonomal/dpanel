@@ -2,6 +2,7 @@ app:
   name: ${APP_NAME-dpanel}
   version: ${APP_VERSION}
   env: ${APP_ENV-lite}
+  family: ${APP_FAMILY-ce}
   server: http
   cors:
     - http://localhost:8000
@@ -30,6 +31,8 @@ database:
     db_name: ${STORAGE_LOCAL_PATH}/dpanel.db
     charset: utf8mb4
     prefix: ims_
+    options:
+      mode: ${DB_MODE}
 storage:
   local:
     path: ${STORAGE_LOCAL_PATH}

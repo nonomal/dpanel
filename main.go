@@ -11,6 +11,7 @@ import (
 	"github.com/donknap/dpanel/common/entity"
 	common2 "github.com/donknap/dpanel/common/middleware"
 	"github.com/donknap/dpanel/common/migrate"
+	"github.com/donknap/dpanel/common/service/family"
 	"github.com/donknap/dpanel/common/service/storage"
 	"github.com/donknap/dpanel/common/service/ws"
 	"github.com/gin-gonic/gin"
@@ -38,7 +39,7 @@ func main() {
 	// 兼容没有配置存储目录的情况
 	if os.Getenv("STORAGE_LOCAL_PATH") == "" {
 		exePath, _ := os.Executable()
-		os.Setenv("STORAGE_LOCAL_PATH", filepath.Dir(exePath))
+		_ = os.Setenv("STORAGE_LOCAL_PATH", filepath.Dir(exePath))
 	}
 
 	myApp := app.NewApp(
@@ -152,9 +153,10 @@ func main() {
 		return Asset
 	})
 
-	// 注册业务 provider，此模块中需要使用 http server 和 console
+	new(family.Provider).Register(httpServer, facade.GetConsole())
 	new(common.Provider).Register(httpServer)
 	new(application.Provider).Register(httpServer)
 	new(ctrl.Provider).Register(facade.GetConsole())
+
 	myApp.RunConsole()
 }

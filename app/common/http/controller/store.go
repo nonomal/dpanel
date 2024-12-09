@@ -14,6 +14,7 @@ import (
 	"github.com/we7coreteam/w7-rangine-go/v2/src/http/controller"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -171,7 +172,7 @@ func (self Store) Sync(http *gin.Context) {
 			return
 		}
 	} else if params.Type == accessor.StoreTypeCasaOs {
-		err = logic.Store{}.SyncByZip(storeRootPath, params.Url)
+		err = logic.Store{}.SyncByZip(storeRootPath, params.Url, "Apps")
 		if err != nil {
 			self.JsonResponseWithError(http, err, 500)
 			return
@@ -204,9 +205,10 @@ func (self Store) Sync(http *gin.Context) {
 
 func (self Store) Deploy(http *gin.Context) {
 	type ParamsValidate struct {
-		StoreId     int32  `json:"storeId" binding:"required"`
-		Name        string `json:"name" binding:"required"`
-		ComposeFile string `json:"composeFile" binding:"required"`
+		StoreId     int32              `json:"storeId" binding:"required"`
+		Name        string             `json:"name" binding:"required"`
+		ComposeFile string             `json:"composeFile" binding:"required"`
+		Environment []accessor.EnvItem `json:"environment"`
 	}
 	params := ParamsValidate{}
 	if !self.Validate(http, &params) {
@@ -224,13 +226,14 @@ func (self Store) Deploy(http *gin.Context) {
 		return
 	}
 	composeNew := &entity.Compose{
-		Name:  params.Name,
+		Name:  strings.ToLower(params.Name),
 		Title: "",
 		Yaml:  "",
 		Setting: &accessor.ComposeSettingOption{
-			Status: "waiting",
-			Type:   accessor.ComposeTypeStore,
-			Store:  fmt.Sprintf("%s@%s", storeRow.Title, storeRow.Setting.Url),
+			Status:      "waiting",
+			Type:        accessor.ComposeTypeStore,
+			Store:       fmt.Sprintf("%s@%s", storeRow.Title, storeRow.Setting.Url),
+			Environment: params.Environment,
 			Uri: []string{
 				filepath.Join(params.Name, filepath.Base(params.ComposeFile)),
 			},

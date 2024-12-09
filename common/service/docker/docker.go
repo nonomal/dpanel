@@ -3,6 +3,7 @@ package docker
 import (
 	"context"
 	"errors"
+	"fmt"
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
@@ -11,6 +12,7 @@ import (
 	"github.com/docker/go-connections/nat"
 	"github.com/donknap/dpanel/common/service/storage"
 	v1 "github.com/opencontainers/image-spec/specs-go/v1"
+	"log/slog"
 	"path/filepath"
 	"strings"
 )
@@ -29,6 +31,7 @@ type Builder struct {
 	Ctx           context.Context
 	CtxCancelFunc context.CancelFunc
 	ExtraParams   []string
+	Env           []string
 	Host          string
 }
 
@@ -43,6 +46,7 @@ type NewDockerClientOption struct {
 func NewDockerClient(option NewDockerClientOption) (*Builder, error) {
 	builder := &Builder{
 		ExtraParams: make([]string, 0),
+		Env:         make([]string, 0),
 	}
 
 	dockerOption := []client.Opt{
@@ -51,6 +55,7 @@ func NewDockerClient(option NewDockerClientOption) (*Builder, error) {
 	}
 	if option.Address != "" {
 		builder.ExtraParams = append(builder.ExtraParams, "-H", option.Address)
+		builder.Env = append(builder.Env, fmt.Sprintf("DOCKER_HOST=%s", option.Address))
 		dockerOption = append(dockerOption, client.WithHost(option.Address))
 	} else {
 		option.Host = "local"
@@ -65,6 +70,11 @@ func NewDockerClient(option NewDockerClientOption) (*Builder, error) {
 			"--tlscacert", filepath.Join(storage.Local{}.GetStorageCertPath(), option.TlsCa),
 			"--tlscert", filepath.Join(storage.Local{}.GetStorageCertPath(), option.TlsCert),
 			"--tlskey", filepath.Join(storage.Local{}.GetStorageCertPath(), option.TlsKey))
+		builder.Env = append(builder.Env,
+			"DOCKER_TLS_VERIFY=1",
+			"DOCKER_CERT_PATH="+filepath.Dir(filepath.Join(storage.Local{}.GetStorageCertPath(), option.TlsCa)),
+		)
+		slog.Debug("docker connect tls", "extra params", builder.ExtraParams, "env", builder.Env)
 	}
 	obj, err := client.NewClientWithOpts(dockerOption...)
 	if err != nil {

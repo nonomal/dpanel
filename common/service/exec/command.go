@@ -24,12 +24,11 @@ type RunCommandOption struct {
 	Follow     bool
 	Timeout    time.Duration
 	Dir        string
+	Env        []string
 }
 
 func (self Command) RunInTerminal(option *RunCommandOption) (io.ReadCloser, error) {
-	slog.Debug("run command", option.CmdName, option.CmdArgs)
-
-	cmd = exec.Command(option.CmdName, option.CmdArgs...)
+	cmd = self.getCommand(option)
 	var out *os.File
 	var err error
 
@@ -49,10 +48,38 @@ func (self Command) RunInTerminal(option *RunCommandOption) (io.ReadCloser, erro
 }
 
 func (self Command) Run(option *RunCommandOption) (io.Reader, error) {
-	slog.Debug("run command", option.CmdName, option.CmdArgs)
 	out := new(bytes.Buffer)
-	cmd = exec.Command(option.CmdName, option.CmdArgs...)
+	cmd = self.getCommand(option)
+	cmd.Stdout = out
+	cmd.Stderr = out
+	err := cmd.Run()
+	if err != nil {
+		return nil, errors.Join(err, errors.New(out.String()))
+	}
+	return out, nil
+}
 
+func (self Command) RunWithResult(option *RunCommandOption) string {
+	cmd = self.getCommand(option)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		slog.Debug(option.CmdName, option.CmdArgs, err.Error())
+	}
+	return string(out)
+}
+
+func (self Command) getCommand(option *RunCommandOption) *exec.Cmd {
+	if cmd != nil && cmd.Process.Pid > 0 {
+		// 将上一条命令中止掉
+		if err := cmd.Process.Kill(); err == nil {
+			_, err = cmd.Process.Wait()
+			if err != nil {
+				slog.Debug("command kill error", err.Error())
+			}
+		}
+	}
+	slog.Debug("run command", option.CmdName, option.CmdArgs)
+	cmd = exec.Command(option.CmdName, option.CmdArgs...)
 	if option.Timeout > 0 {
 		ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(option.Timeout))
 		go func() {
@@ -69,28 +96,19 @@ func (self Command) Run(option *RunCommandOption) (io.Reader, error) {
 	if option.Dir != "" {
 		cmd.Dir = option.Dir
 	}
-	cmd.Stdout = out
-	cmd.Stderr = out
-	err := cmd.Run()
-	if err != nil {
-		return nil, errors.Join(err, errors.New(out.String()))
+	if option.Env != nil {
+		cmd.Env = option.Env
 	}
-	return out, nil
-}
-
-func (self Command) RunWithResult(option *RunCommandOption) string {
-	slog.Debug("run command", option.CmdName, option.CmdArgs)
-	cmd = exec.Command(option.CmdName, option.CmdArgs...)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		slog.Debug(option.CmdName, option.CmdArgs, err.Error())
-	}
-	return string(out)
+	return cmd
 }
 
 func (self Command) Kill() error {
 	if cmd != nil {
-		return cmd.Process.Kill()
+		err := cmd.Process.Kill()
+		if err != nil {
+			return err
+		}
+		return cmd.Wait()
 	}
 	return nil
 }

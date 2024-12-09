@@ -20,6 +20,7 @@ import (
 	"io/fs"
 	"net/http"
 	"os"
+	exec2 "os/exec"
 	"path/filepath"
 	"strings"
 )
@@ -58,10 +59,21 @@ func (self Compose) Ls() []*composeItem {
 		"--format", "json",
 		"--all",
 	}
-	out := exec.Command{}.RunWithResult(&exec.RunCommandOption{
-		CmdName: "docker",
-		CmdArgs: append(append(docker.Sdk.ExtraParams, "compose"), command...),
-	})
+
+	out := ""
+	if _, err := exec2.LookPath("docker-compose"); err == nil {
+		out = exec.Command{}.RunWithResult(&exec.RunCommandOption{
+			CmdName: "docker-compose",
+			CmdArgs: command,
+			Env:     docker.Sdk.Env,
+		})
+	} else {
+		out = exec.Command{}.RunWithResult(&exec.RunCommandOption{
+			CmdName: "docker",
+			CmdArgs: append(append(docker.Sdk.ExtraParams, "compose"), command...),
+		})
+	}
+
 	result := make([]*composeItem, 0)
 	err := json.Unmarshal([]byte(out), &result)
 	if err != nil {
@@ -211,9 +223,6 @@ func (self Compose) Sync() error {
 			if function.InArray([]string{
 				accessor.ComposeTypeOutPath, accessor.ComposeTypeStoragePath, accessor.ComposeTypeStore,
 			}, dbComposeRow.Setting.Type) {
-				if dbComposeRow.Setting.Type == accessor.ComposeTypeOutPath || dbComposeRow.Setting.Type == accessor.ComposeTypeStore {
-					_ = os.RemoveAll(filepath.Join(storage.Local{}.GetComposePath(), filepath.Dir(dbComposeRow.Setting.Uri[0])))
-				}
 				_, _ = dao.Compose.Where(dao.Compose.ID.Eq(dbComposeRow.ID)).Delete()
 			}
 
@@ -242,6 +251,14 @@ func (self Compose) GetTasker(entity *entity.Compose) (*compose.Task, error) {
 	dpanelContainerInfo, _ := docker.Sdk.ContainerInfo(facade.GetConfig().GetString("app.name"))
 	for _, mount := range dpanelContainerInfo.Mounts {
 		if mount.Type == types.VolumeTypeBind && mount.Destination == "/dpanel" {
+			// 当容器挂载了外部目录，创建时必须保证此目录有文件可以访问。否则相对目录会错误
+			if _, err := os.Stat(mount.Source); err != nil {
+				_ = os.MkdirAll(mount.Source, os.ModePerm)
+				err = os.Symlink(storage.Local{}.GetComposePath(), filepath.Join(mount.Source, "compose"))
+				if err != nil {
+					return nil, err
+				}
+			}
 			workingDir = filepath.Join(mount.Source, "compose")
 		}
 	}
@@ -270,12 +287,7 @@ func (self Compose) GetTasker(entity *entity.Compose) (*compose.Task, error) {
 		}
 	}
 
-	var taskFileDir string
-	if entity.Setting.Type == accessor.ComposeTypeRemoteUrl {
-		taskFileDir = filepath.Join(workingDir, filepath.Dir(entity.Setting.Uri[0]))
-	} else {
-		taskFileDir = filepath.Join(workingDir, entity.Name)
-	}
+	taskFileDir := filepath.Join(workingDir, filepath.Dir(entity.Setting.Uri[0]))
 
 	yamlFilePath := make([]string, 0)
 
@@ -302,7 +314,7 @@ func (self Compose) GetTasker(entity *entity.Compose) (*compose.Task, error) {
 	if !function.IsEmptyArray(entity.Setting.Environment) {
 		globalEnv := make([]string, 0)
 		for _, item := range entity.Setting.Environment {
-			globalEnv = append(globalEnv, fmt.Sprintf("%s=%s", item.Name, item.Value))
+			globalEnv = append(globalEnv, fmt.Sprintf("%s=%s", item.Name, compose.ReplacePlaceholder(item.Value)))
 		}
 		envFileName := filepath.Join(taskFileDir, ComposeProjectEnvFileName)
 		err := os.MkdirAll(filepath.Dir(envFileName), os.ModePerm)
